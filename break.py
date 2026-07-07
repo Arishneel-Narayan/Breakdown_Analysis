@@ -134,9 +134,11 @@ def render_trend_png(trend_df):
     return base64.b64encode(buf.read()).decode('utf-8')
 
 # --- 5. PDF GENERATION LOGIC ---
-def _truncate(text, max_len=90):
+import html as _html
+
+def _safe_text(text):
     text = str(text) if pd.notna(text) else ""
-    return text if len(text) <= max_len else text[:max_len - 1].rstrip() + "…"
+    return _html.escape(text)
 
 def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
     tot_mins = filtered_df['Duration (mins)'].sum()
@@ -150,8 +152,8 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
         "<tr>"
         f"<td>{row.get(asset_col, 'N/A') if pd.notna(row.get(asset_col)) else 'N/A'}</td>"
         f"<td>{row['Duration (mins)'] / 60:.1f}</td>"
-        f"<td>{_truncate(row.get('Details', ''))}</td>"
-        f"<td>{_truncate(row.get('Solution', ''))}</td>"
+        f"<td>{_safe_text(row.get('Details', ''))}</td>"
+        f"<td>{_safe_text(row.get('Solution', ''))}</td>"
         "</tr>"
         for row in top_breakdowns.to_dict('records')
     ])
@@ -175,8 +177,10 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
         .section-title {{ font-size: 14pt; color: #005B96; font-weight: bold; border-bottom: 1px solid #eee; margin-bottom: 10px; padding-bottom: 5px; }}
         .img-container {{ text-align: center; }}
         .data-table {{ width: 100%; border-collapse: collapse; font-size: 9pt; table-layout: fixed; }}
-        .data-table th, .data-table td {{ border-bottom: 1px solid #eee; padding: 6px; text-align: left; word-wrap: break-word; }}
+        .data-table th, .data-table td {{ border-bottom: 1px solid #eee; padding: 6px; text-align: left; word-wrap: break-word; overflow-wrap: break-word; }}
         .data-table th {{ background-color: #005B96; color: white; }}
+        .data-table tr {{ page-break-inside: avoid; }}
+        .data-table thead {{ display: table-header-group; }}
         .stats-table {{ width: 100%; text-align: center; margin-top: 20px; border-collapse: separate; border-spacing: 10px 0; }}
         .stats-table td {{ border: 1px solid #ddd; padding: 15px; width: 33.33%; border-radius: 5px; background-color: #f9f9f9; }}
         .val {{ font-size: 18pt; font-weight: bold; color: #FF9800; display: block; margin-top: 5px; }}
@@ -202,10 +206,14 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
         <div class="section-title">Top Breakdown</div>
         <table class="data-table">
             <colgroup>
-                <col style="width: 15%;"><col style="width: 12%;"><col style="width: 38%;"><col style="width: 35%;">
+                <col style="width: 12%;"><col style="width: 10%;"><col style="width: 39%;"><col style="width: 39%;">
             </colgroup>
-            <tr><th>Asset</th><th>Duration (Hrs)</th><th>Details</th><th>Solution</th></tr>
-            {top_rows_html}
+            <thead>
+                <tr><th>Asset</th><th>Duration (Hrs)</th><th>Details</th><th>Solution</th></tr>
+            </thead>
+            <tbody>
+                {top_rows_html}
+            </tbody>
         </table>
         <table class="stats-table">
             <tr>
