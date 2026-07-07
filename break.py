@@ -18,6 +18,10 @@ def load_data(file):
         
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df['Duration (mins)'] = pd.to_numeric(df['Duration (mins)'], errors='coerce').fillna(0)
+    
+    # Create the combined Asset column
+    df['Asset'] = (df['Line'].fillna('') + ' ' + df['Process'].fillna('')).str.strip()
+    
     return df
 
 # --- FILE UPLOAD ---
@@ -62,22 +66,24 @@ col3.metric("Avg Duration per Incident", f"{avg_downtime_mins:,.1f} mins")
 st.markdown("---")
 
 # --- PARETO ANALYSIS ---
-st.subheader("Pareto Analysis by Process")
+st.subheader("Pareto Analysis by Asset")
 pareto_container = st.empty()
 pareto_entity = st.selectbox("Filter Entity for Pareto Chart:", entity_list, key="pareto_entity")
 
 pareto_df = base_df if pareto_entity == "All" else base_df[base_df['Entity'] == pareto_entity]
-p_calc_df = pareto_df.groupby('Process')['Duration (mins)'].sum().reset_index()
+
+# Group by the newly created Asset column
+p_calc_df = pareto_df.groupby('Asset')['Duration (mins)'].sum().reset_index()
 p_calc_df = p_calc_df.sort_values(by='Duration (mins)', ascending=False)
 p_calc_df['Cumulative Percentage'] = 100 * p_calc_df['Duration (mins)'].cumsum() / p_calc_df['Duration (mins)'].sum()
 
 fig_pareto = go.Figure()
 fig_pareto.add_trace(go.Bar(
-    x=p_calc_df['Process'], y=p_calc_df['Duration (mins)'],
+    x=p_calc_df['Asset'], y=p_calc_df['Duration (mins)'],
     name='Downtime (mins)', marker_color='#005B96'
 ))
 fig_pareto.add_trace(go.Scatter(
-    x=p_calc_df['Process'], y=p_calc_df['Cumulative Percentage'],
+    x=p_calc_df['Asset'], y=p_calc_df['Cumulative Percentage'],
     name='Cumulative %', yaxis='y2', mode='lines+markers',
     line=dict(color='#FF9800', width=3)
 ))
@@ -90,9 +96,9 @@ pareto_container.plotly_chart(fig_pareto, use_container_width=True)
 
 st.markdown("""
 **Purpose and Insights:**
-* **Identify Critical Bottlenecks:** Highlights the 20% of processes causing 80% of total downtime.
-* **Resource Allocation:** Directs maintenance teams to focus on the highest-impact processes first.
-* **ROI Justification:** Provides quantitative backing for requesting capital expenditure to upgrade specific problematic machine centers.
+* **Identify Critical Bottlenecks:** Highlights the 20% of specific assets causing 80% of total downtime.
+* **Resource Allocation:** Directs maintenance teams to focus on the highest-impact machine centers first.
+* **ROI Justification:** Provides quantitative backing for requesting capital expenditure to upgrade specific problematic assets.
 """)
 st.markdown("---")
 
