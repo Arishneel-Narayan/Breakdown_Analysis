@@ -3,22 +3,18 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import base64
+import io
 from weasyprint import HTML
 
-# --- KALEIDO HEADLESS CHROME FIX ---
-import plotly.io as pio
-pio.kaleido.scope.chromium_args = tuple(
-    list(pio.kaleido.scope.chromium_args) + 
-    ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-)
-# -----------------------------------
+import matplotlib
+matplotlib.use("Agg")  # headless backend, no display/subprocess needed
+import matplotlib.pyplot as plt
 
 # --- 1. SETUP & DATA LOADING ---
 st.set_page_config(page_title="Breakdown Analysis Dashboard", layout="wide")
 
 @st.cache_data
 def load_data(file):
-    # Determine file type and read accordingly
     if file.name.endswith('.csv'):
         df = pd.read_csv(file)
     elif file.name.endswith(('.xls', '.xlsx')):
@@ -26,8 +22,7 @@ def load_data(file):
     else:
         st.error("Unsupported file format. Please upload a CSV or Excel file.")
         st.stop()
-        
-    # Clean and format data
+
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df['Duration (mins)'] = pd.to_numeric(df['Duration (mins)'], errors='coerce').fillna(0)
     return df
@@ -40,7 +35,6 @@ if uploaded_file is None:
     st.info("Please upload a data file (CSV or Excel) to generate the dashboard.")
     st.stop()
 
-# Load the data once uploaded
 df = load_data(uploaded_file)
 entity_list = ["All"] + df['Entity'].dropna().unique().tolist()
 
@@ -52,13 +46,12 @@ min_date = df['Date'].min().date()
 max_date = df['Date'].max().date()
 
 date_range = st.date_input(
-    "Select Date Range", 
-    value=(min_date, max_date), 
-    min_value=min_date, 
+    "Select Date Range",
+    value=(min_date, max_date),
+    min_value=min_date,
     max_value=max_date
 )
 
-# Apply global date filter
 if len(date_range) == 2:
     start_date, end_date = date_range
     mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
@@ -67,34 +60,59 @@ else:
     base_df = df.copy()
     start_date, end_date = min_date, max_date
 
-# --- 4. PDF GENERATION LOGIC ---
+# --- 4. FAST CHART RENDERING (matplotlib, no subprocess) ---
+PALETTE = ["#005B96", "#FF9800", "#009688", "#8E44AD", "#E74C3C", "#2ECC71", "#95A5A6"]
+
+def render_pie_png(cat_df):
+    fig, ax = plt.subplots(figsize=(4, 3.5), dpi=150)
+    ax.pie(
+        cat_df['Duration (mins)'],
+        labels=cat_df['Category'],
+        autopct='%1.0f%%',
+        pctdistance=0.8,
+        colors=PALETTE,
+        wedgeprops=dict(width=0.4)  # donut style, matches original hole=0.4
+    )
+    ax.set_aspect('equal')
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', transparent=True)
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+def render_trend_png(trend_df):
+    fig, ax = plt.subplots(figsize=(8, 2.5), dpi=150)
+    ax.plot(trend_df['Date'], trend_df['Duration (mins)'], color='#009688', linewidth=2.5)
+    ax.set_ylabel('Duration (mins)')
+    ax.spines[['top', 'right']].set_visible(False)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', transparent=True)
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+# --- 5. PDF GENERATION LOGIC ---
 def generate_pdf(filtered_df, start_d, end_d, entity_filter):
-    # Calculate Metrics
     tot_mins = filtered_df['Duration (mins)'].sum()
     tot_hrs = tot_mins / 60
     tot_inc = len(filtered_df)
     avg_dur = tot_mins / tot_inc if tot_inc > 0 else 0
-    
-    # Get Top Breakdowns
-    top_10 = filtered_df.sort_values(by='Duration (mins)', ascending=False).head(10)
-    top_10_html = "".join([f"<tr><td>{i+1}</td><td>{row['Process']} - {row['Category']}</td><td>{row['Duration (mins)']}</td></tr>" for i, row in enumerate(top_10.to_dict('records'))])
-    
-    # Generate Visuals (Base64)
-    cat_df = filtered_df.groupby('Category')['Duration (mins)'].sum().reset_index()
-    fig_pie = px.pie(
-        cat_df, values='Duration (mins)', names='Category', hole=0.4,
-        color_discrete_sequence=px.colors.qualitative.Safe
-    )
-    fig_pie.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-    pie_img = base64.b64encode(fig_pie.to_image(format="png", width=400, height=350)).decode('utf-8')
-    
-    trend_df = filtered_df.groupby('Date')['Duration (mins)'].sum().reset_index().sort_values('Date')
-    fig_trend = px.line(trend_df, x='Date', y='Duration (mins)', line_shape='spline')
-    fig_trend.update_traces(line_color='#009688', line_width=3)
-    fig_trend.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-    trend_img = base64.b64encode(fig_trend.to_image(format="png", width=800, height=250)).decode('utf-8')
 
-    # Construct HTML
+    top_10 = filtered_df.sort_values(by='Duration (mins)', ascending=False).head(10)
+    top_10_html = "".join([
+        f"<tr><td>{i+1}</td><td>{row['Process']} - {row['Category']}</td><td>{row['Duration (mins)']}</td></tr>"
+        for i, row in enumerate(top_10.to_dict('records'))
+    ])
+
+    cat_df = filtered_df.groupby('Category')['Duration (mins)'].sum().reset_index()
+    pie_img = render_pie_png(cat_df)
+
+    trend_df = filtered_df.groupby('Date')['Duration (mins)'].sum().reset_index().sort_values('Date')
+    trend_img = render_trend_png(trend_df)
+
     html_template = f"""
     <html>
     <head>
@@ -146,12 +164,12 @@ def generate_pdf(filtered_df, start_d, end_d, entity_filter):
     </body>
     </html>
     """
-    
+
     return HTML(string=html_template).write_pdf()
 
 st.sidebar.markdown("---")
 if st.sidebar.button("Generate 1-Pager PDF"):
-    with st.spinner("Compiling report... This may take a moment."):
+    with st.spinner("Compiling report..."):
         pdf_bytes = generate_pdf(base_df, start_date, end_date, "All (Global Filter)")
         st.sidebar.download_button(
             label="Download PDF",
@@ -162,7 +180,7 @@ if st.sidebar.button("Generate 1-Pager PDF"):
 
 st.markdown("---")
 
-# --- 5. KPIs ---
+# --- 6. KPIs ---
 col1, col2, col3 = st.columns(3)
 total_downtime_mins = base_df['Duration (mins)'].sum()
 total_downtime_hours = total_downtime_mins / 60
@@ -174,7 +192,7 @@ col2.metric("Total Breakdown Incidents", f"{total_incidents}")
 col3.metric("Avg Duration per Incident", f"{avg_downtime_mins:,.1f} mins")
 st.markdown("---")
 
-# --- 6. PARETO ANALYSIS ---
+# --- 7. PARETO ANALYSIS ---
 st.subheader("Pareto Analysis by Process")
 pareto_container = st.empty()
 pareto_entity = st.selectbox("Filter Entity for Pareto Chart:", entity_list, key="pareto_entity")
@@ -209,7 +227,7 @@ st.markdown("""
 """)
 st.markdown("---")
 
-# --- 7. DOWNTIME TRENDS ---
+# --- 8. DOWNTIME TRENDS ---
 st.subheader("Downtime Trend Analysis")
 trend_container = st.empty()
 trend_entity = st.selectbox("Filter Entity for Trend Chart:", entity_list, key="trend_entity")
@@ -218,7 +236,7 @@ trend_df_filtered = base_df if trend_entity == "All" else base_df[base_df['Entit
 trend_calc_df = trend_df_filtered.groupby('Date')['Duration (mins)'].sum().reset_index().sort_values('Date')
 
 fig_trend = px.line(
-    trend_calc_df, x='Date', y='Duration (mins)', 
+    trend_calc_df, x='Date', y='Duration (mins)',
     markers=True, line_shape='spline'
 )
 fig_trend.update_traces(line_color='#009688', line_width=3, marker=dict(size=8))
@@ -233,7 +251,7 @@ st.markdown("""
 """)
 st.markdown("---")
 
-# --- 8. CATEGORICAL BREAKDOWN ---
+# --- 9. CATEGORICAL BREAKDOWN ---
 st.subheader("Root Cause Category Distribution")
 cat_container = st.empty()
 cat_entity = st.selectbox("Filter Entity for Category Chart:", entity_list, key="cat_entity")
