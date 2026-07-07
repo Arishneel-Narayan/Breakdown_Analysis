@@ -3,4 +3,4 @@ pandas
 plotly
 openpyxl
 weasyprint
-kaleido
+kaleido==0.1.0.post1
