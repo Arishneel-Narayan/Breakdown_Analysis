@@ -165,6 +165,7 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
     html_template = f"""
     <html>
     <head>
+    <title>Breakdown Analysis - {entity_filter} - {start_d_str} to {end_d_str}</title>
     <style>
         @page {{ size: A4; margin: 15mm 15mm; }}
         body {{ font-family: 'Helvetica', sans-serif; color: #333; }}
@@ -183,8 +184,8 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
     </head>
     <body>
         <div class="header">
-            <h1 style="color: #005B96; margin: 0; text-transform: uppercase;">Breakdown Analysis</h1>
-            <p style="margin: 5px 0 0 0; color: #555;">Entity: {entity_filter} | Date Range: {start_d_str} to {end_d_str}</p>
+            <h1 style="color: #005B96; margin: 0; text-transform: uppercase;">Breakdown Analysis - {entity_filter}</h1>
+            <p style="margin: 5px 0 0 0; color: #555;">Date Range: {start_d_str} to {end_d_str}</p>
         </div>
         <table class="layout">
             <tr>
