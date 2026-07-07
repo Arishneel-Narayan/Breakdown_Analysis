@@ -120,11 +120,23 @@ def render_pie_png(data_df, label_col, value_col):
     return base64.b64encode(buf.read()).decode('utf-8')
 
 def render_trend_png(trend_df):
-    fig, ax = plt.subplots(figsize=(8, 2.5), dpi=150)
+    fig, ax = plt.subplots(figsize=(6, 4.3), dpi=150)
     ax.plot(trend_df['Date'], trend_df['Duration (mins)'], color='#009688', linewidth=2.5)
     ax.set_ylabel('Duration (mins)')
     ax.spines[['top', 'right']].set_visible(False)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%a %d %B'))
+
+    # Tighten the y-axis to the data's own range (with a small margin) instead of
+    # matplotlib's default padding, so the line fills the frame rather than
+    # leaving a block of empty space above/below it.
+    max_val = trend_df['Duration (mins)'].max()
+    min_val = trend_df['Duration (mins)'].min()
+    if pd.notna(max_val):
+        lower = min(0, min_val)
+        upper = max_val * 1.1 if max_val > 0 else 1
+        ax.set_ylim(lower, upper)
+    ax.margins(x=0.03)
+
     fig.autofmt_xdate()
     fig.tight_layout()
     buf = io.BytesIO()
