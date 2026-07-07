@@ -7,22 +7,27 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Breakdown Analysis Dashboard", layout="wide")
 
 @st.cache_data
-def load_data(file_path):
-    df = pd.read_csv(file_path)
+def load_data(file):
+    df = pd.read_csv(file)
     # Clean and format data
     df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
     df['Duration (mins)'] = pd.to_numeric(df['Duration (mins)'], errors='coerce').fillna(0)
     return df
 
-# Initialize data (Replace with your actual file path)
-try:
-    df = load_data('breakdown_data.csv')
-except FileNotFoundError:
-    st.error("Data file 'breakdown_data.csv' not found. Please ensure it is in the directory.")
+st.title("🏭 Plant Breakdown & Downtime Analysis")
+
+# --- 2. SIDEBAR & FILE UPLOAD ---
+st.sidebar.header("Data Input & Filters")
+uploaded_file = st.sidebar.file_uploader("Upload Breakdown Data (CSV)", type=['csv'])
+
+if uploaded_file is None:
+    st.info("Please upload a CSV file in the sidebar to generate the dashboard.")
     st.stop()
 
-# --- 2. SIDEBAR FILTERING ---
-st.sidebar.header("Dashboard Filters")
+# Load the data once uploaded
+df = load_data(uploaded_file)
+
+# Entity Filtering
 entity_list = ["All"] + df['Entity'].dropna().unique().tolist()
 selected_entity = st.sidebar.selectbox("Select Entity", entity_list)
 
@@ -30,8 +35,6 @@ if selected_entity != "All":
     filtered_df = df[df['Entity'] == selected_entity]
 else:
     filtered_df = df.copy()
-
-st.title("🏭 Plant Breakdown & Downtime Analysis")
 
 # --- 3. KPIs ---
 col1, col2, col3 = st.columns(3)
