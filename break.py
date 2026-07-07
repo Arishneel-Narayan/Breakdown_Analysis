@@ -9,6 +9,7 @@ from weasyprint import HTML
 import matplotlib
 matplotlib.use("Agg")  # headless backend, no display/subprocess needed
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 # --- 1. SETUP & DATA LOADING ---
 st.set_page_config(page_title="Breakdown Analysis Dashboard", layout="wide")
@@ -123,6 +124,7 @@ def render_trend_png(trend_df):
     ax.plot(trend_df['Date'], trend_df['Duration (mins)'], color='#009688', linewidth=2.5)
     ax.set_ylabel('Duration (mins)')
     ax.spines[['top', 'right']].set_visible(False)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%a %d %B'))
     fig.autofmt_xdate()
     fig.tight_layout()
     buf = io.BytesIO()
@@ -140,7 +142,7 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
 
     top_10 = filtered_df.sort_values(by='Duration (mins)', ascending=False).head(10)
     top_10_html = "".join([
-        f"<tr><td>{i+1}</td><td>{row['Process']} - {row['Category']}</td><td>{row['Duration (mins)']}</td></tr>"
+        f"<tr><td>{i+1}</td><td>{row['Process']} - {row['Category']}</td><td>{row['Duration (mins)'] / 60:.1f}</td></tr>"
         for i, row in enumerate(top_10.to_dict('records'))
     ])
 
@@ -181,9 +183,9 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
                     <div class="img-container"><img src="data:image/png;base64,{pie_img}" style="max-width: 100%;"></div>
                 </td>
                 <td style="width: 55%;">
-                    <div class="section-title">Top 10 Breakdowns</div>
+                    <div class="section-title">Top Breakdowns</div>
                     <table class="data-table">
-                        <tr><th>Rank</th><th>Process</th><th>Mins</th></tr>
+                        <tr><th>Rank</th><th>Process</th><th>Hours</th></tr>
                         {top_10_html}
                     </table>
                 </td>
@@ -272,7 +274,7 @@ fig_trend = px.line(
 )
 fig_trend.update_traces(line_color='#009688', line_width=3, marker=dict(size=8))
 fig_trend.update_layout(margin=dict(l=0, r=0, t=30, b=0))
-fig_trend.update_xaxes(tickformat="%d/%m/%Y")
+fig_trend.update_xaxes(tickformat="%a %d %B")
 st.plotly_chart(fig_trend, use_container_width=True)
 
 st.markdown("""
