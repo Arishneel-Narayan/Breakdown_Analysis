@@ -27,7 +27,7 @@ def load_data(file):
     df['Duration (mins)'] = pd.to_numeric(df['Duration (mins)'], errors='coerce').fillna(0)
     return df
 
-# --- 2. SIDEBAR FILE UPLOAD ---
+# --- 2. SIDEBAR: FILE UPLOAD ONLY ---
 st.sidebar.header("Data Input")
 uploaded_file = st.sidebar.file_uploader("Upload Breakdown Data", type=['csv', 'xlsx', 'xls'])
 
@@ -36,29 +36,42 @@ if uploaded_file is None:
     st.stop()
 
 df = load_data(uploaded_file)
-entity_list = ["All"] + df['Entity'].dropna().unique().tolist()
+entity_list = ["All"] + sorted(df['Entity'].dropna().unique().tolist())
 
 st.title("🏭 Plant Breakdown & Downtime Analysis")
 
-# --- 3. GLOBAL DATE FILTER (TOP) ---
+# --- 3. GLOBAL FILTERS (MAIN AREA, NOT SIDEBAR) ---
 st.markdown("### Report Parameters")
 min_date = df['Date'].min().date()
 max_date = df['Date'].max().date()
 
-date_range = st.date_input(
-    "Select Date Range",
-    value=(min_date, max_date),
-    min_value=min_date,
-    max_value=max_date
-)
+filter_col1, filter_col2 = st.columns([2, 1])
+
+with filter_col1:
+    date_range = st.date_input(
+        "Select Date Range",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date,
+        format="DD/MM/YYYY"
+    )
+
+with filter_col2:
+    selected_entity = st.selectbox("Filter Entity (applies to everything below)", entity_list, key="global_entity")
 
 if len(date_range) == 2:
     start_date, end_date = date_range
-    mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
-    base_df = df.loc[mask]
 else:
-    base_df = df.copy()
     start_date, end_date = min_date, max_date
+
+date_mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
+base_df = df.loc[date_mask]
+
+if selected_entity != "All":
+    base_df = base_df[base_df['Entity'] == selected_entity]
+
+start_date_str = pd.Timestamp(start_date).strftime('%d/%m/%Y')
+end_date_str = pd.Timestamp(end_date).strftime('%d/%m/%Y')
 
 # --- 4. FAST CHART RENDERING (matplotlib, no subprocess) ---
 PALETTE = ["#005B96", "#FF9800", "#009688", "#8E44AD", "#E74C3C", "#2ECC71", "#95A5A6"]
@@ -71,7 +84,7 @@ def render_pie_png(cat_df):
         autopct='%1.0f%%',
         pctdistance=0.8,
         colors=PALETTE,
-        wedgeprops=dict(width=0.4)  # donut style, matches original hole=0.4
+        wedgeprops=dict(width=0.4)
     )
     ax.set_aspect('equal')
     fig.tight_layout()
@@ -95,7 +108,7 @@ def render_trend_png(trend_df):
     return base64.b64encode(buf.read()).decode('utf-8')
 
 # --- 5. PDF GENERATION LOGIC ---
-def generate_pdf(filtered_df, start_d, end_d, entity_filter):
+def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
     tot_mins = filtered_df['Duration (mins)'].sum()
     tot_hrs = tot_mins / 60
     tot_inc = len(filtered_df)
@@ -135,7 +148,7 @@ def generate_pdf(filtered_df, start_d, end_d, entity_filter):
     <body>
         <div class="header">
             <h1 style="color: #005B96; margin: 0; text-transform: uppercase;">Breakdown Analysis Report</h1>
-            <p style="margin: 5px 0 0 0; color: #555;">Entity: {entity_filter} | Date Range: {start_d} to {end_d}</p>
+            <p style="margin: 5px 0 0 0; color: #555;">Entity: {entity_filter} | Date Range: {start_d_str} to {end_d_str}</p>
         </div>
         <table class="layout">
             <tr>
@@ -167,11 +180,11 @@ def generate_pdf(filtered_df, start_d, end_d, entity_filter):
 
     return HTML(string=html_template).write_pdf()
 
-st.sidebar.markdown("---")
-if st.sidebar.button("Generate 1-Pager PDF"):
+st.markdown("---")
+if st.button("Generate 1-Pager PDF"):
     with st.spinner("Compiling report..."):
-        pdf_bytes = generate_pdf(base_df, start_date, end_date, "All (Global Filter)")
-        st.sidebar.download_button(
+        pdf_bytes = generate_pdf(base_df, start_date_str, end_date_str, selected_entity)
+        st.download_button(
             label="Download PDF",
             data=pdf_bytes,
             file_name="Breakdown_Report_1Pager.pdf",
@@ -194,11 +207,8 @@ st.markdown("---")
 
 # --- 7. PARETO ANALYSIS ---
 st.subheader("Pareto Analysis by Process")
-pareto_container = st.empty()
-pareto_entity = st.selectbox("Filter Entity for Pareto Chart:", entity_list, key="pareto_entity")
 
-pareto_df = base_df if pareto_entity == "All" else base_df[base_df['Entity'] == pareto_entity]
-p_calc_df = pareto_df.groupby('Process')['Duration (mins)'].sum().reset_index()
+p_calc_df = base_df.groupby('Process')['Duration (mins)'].sum().reset_index()
 p_calc_df = p_calc_df.sort_values(by='Duration (mins)', ascending=False)
 p_calc_df['Cumulative Percentage'] = 100 * p_calc_df['Duration (mins)'].cumsum() / p_calc_df['Duration (mins)'].sum()
 
@@ -217,7 +227,7 @@ fig_pareto.update_layout(
     yaxis2=dict(title='Cumulative %', overlaying='y', side='right', range=[0, 105]),
     hovermode='x unified', margin=dict(l=0, r=0, t=30, b=0)
 )
-pareto_container.plotly_chart(fig_pareto, use_container_width=True)
+st.plotly_chart(fig_pareto, use_container_width=True)
 
 st.markdown("""
 **Purpose and Insights:**
@@ -229,11 +239,8 @@ st.markdown("---")
 
 # --- 8. DOWNTIME TRENDS ---
 st.subheader("Downtime Trend Analysis")
-trend_container = st.empty()
-trend_entity = st.selectbox("Filter Entity for Trend Chart:", entity_list, key="trend_entity")
 
-trend_df_filtered = base_df if trend_entity == "All" else base_df[base_df['Entity'] == trend_entity]
-trend_calc_df = trend_df_filtered.groupby('Date')['Duration (mins)'].sum().reset_index().sort_values('Date')
+trend_calc_df = base_df.groupby('Date')['Duration (mins)'].sum().reset_index().sort_values('Date')
 
 fig_trend = px.line(
     trend_calc_df, x='Date', y='Duration (mins)',
@@ -241,7 +248,8 @@ fig_trend = px.line(
 )
 fig_trend.update_traces(line_color='#009688', line_width=3, marker=dict(size=8))
 fig_trend.update_layout(margin=dict(l=0, r=0, t=30, b=0))
-trend_container.plotly_chart(fig_trend, use_container_width=True)
+fig_trend.update_xaxes(tickformat="%d/%m/%Y")
+st.plotly_chart(fig_trend, use_container_width=True)
 
 st.markdown("""
 **Purpose and Insights:**
@@ -253,11 +261,8 @@ st.markdown("---")
 
 # --- 9. CATEGORICAL BREAKDOWN ---
 st.subheader("Root Cause Category Distribution")
-cat_container = st.empty()
-cat_entity = st.selectbox("Filter Entity for Category Chart:", entity_list, key="cat_entity")
 
-cat_df_filtered = base_df if cat_entity == "All" else base_df[base_df['Entity'] == cat_entity]
-cat_calc_df = cat_df_filtered.groupby('Category')['Duration (mins)'].sum().reset_index()
+cat_calc_df = base_df.groupby('Category')['Duration (mins)'].sum().reset_index()
 
 fig_cat = px.pie(
     cat_calc_df, values='Duration (mins)', names='Category', hole=0.4,
@@ -265,7 +270,7 @@ fig_cat = px.pie(
 )
 fig_cat.update_traces(textposition='inside', textinfo='percent+label')
 fig_cat.update_layout(margin=dict(l=0, r=0, t=30, b=0))
-cat_container.plotly_chart(fig_cat, use_container_width=True)
+st.plotly_chart(fig_cat, use_container_width=True)
 
 st.markdown("""
 **Purpose and Insights:**
