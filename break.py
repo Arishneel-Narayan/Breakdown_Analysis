@@ -10,6 +10,7 @@ import matplotlib
 matplotlib.use("Agg")  # headless backend, no display/subprocess needed
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import html as _html
 
 # --- 1. SETUP & DATA LOADING ---
 st.set_page_config(page_title="Breakdown Analysis Dashboard", layout="wide")
@@ -24,12 +25,10 @@ def load_data(file):
         st.error("Unsupported file format. Please upload a CSV or Excel file.")
         st.stop()
 
-    # Drop fully blank rows (common with trailing empty rows in Excel exports)
+    # Drop fully blank rows
     df = df.dropna(how='all')
 
-    # Clean up text columns: strip stray whitespace and normalize missing values
-    # so " Electrical" and "Electrical" aren't treated as different categories,
-    # and blank cells don't get read back in as the literal string "nan"
+    # Clean up text columns
     for col in ['Entity', 'Process', 'Category', 'Line', 'Shift', 'Details', 'Solution']:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
@@ -38,9 +37,7 @@ def load_data(file):
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df['Duration (mins)'] = pd.to_numeric(df['Duration (mins)'], errors='coerce')
 
-    # A row missing any of these fields isn't a usable breakdown record —
-    # drop it instead of silently filling it with 0, which was creating
-    # fake zero-duration "incidents" (e.g. the "nan - nan" rows)
+    # Drop incomplete rows that lack critical analysis data
     required_cols = [c for c in ['Date', 'Process', 'Category', 'Duration (mins)'] if c in df.columns]
     rows_before = len(df)
     df = df.dropna(subset=required_cols)
@@ -65,7 +62,7 @@ entity_list = ["All"] + sorted(df['Entity'].dropna().unique().tolist())
 
 st.title("🏭 Plant Breakdown & Downtime Analysis")
 
-# --- 3. GLOBAL FILTERS (MAIN AREA, NOT SIDEBAR) ---
+# --- 3. GLOBAL FILTERS ---
 st.markdown("### Report Parameters")
 min_date = df['Date'].min().date()
 max_date = df['Date'].max().date()
@@ -90,7 +87,7 @@ else:
     start_date, end_date = min_date, max_date
 
 date_mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
-base_df = df.loc[date_mask]
+base_df = df.loc[date_mask].copy() # Copy to avoid SettingWithCopyWarning later
 
 if selected_entity != "All":
     base_df = base_df[base_df['Entity'] == selected_entity]
@@ -98,7 +95,7 @@ if selected_entity != "All":
 start_date_str = pd.Timestamp(start_date).strftime('%d/%m/%Y')
 end_date_str = pd.Timestamp(end_date).strftime('%d/%m/%Y')
 
-# --- 4. FAST CHART RENDERING (matplotlib, no subprocess) ---
+# --- 4. FAST CHART RENDERING (matplotlib) ---
 PALETTE = ["#005B96", "#FF9800", "#009688", "#8E44AD", "#E74C3C", "#2ECC71", "#95A5A6"]
 
 def render_pie_png(data_df, label_col, value_col):
@@ -126,9 +123,6 @@ def render_trend_png(trend_df):
     ax.spines[['top', 'right']].set_visible(False)
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%a %d %B'))
 
-    # Tighten the y-axis to the data's own range (with a small margin) instead of
-    # matplotlib's default padding, so the line fills the frame rather than
-    # leaving a block of empty space above/below it.
     max_val = trend_df['Duration (mins)'].max()
     min_val = trend_df['Duration (mins)'].min()
     if pd.notna(max_val):
@@ -146,8 +140,6 @@ def render_trend_png(trend_df):
     return base64.b64encode(buf.read()).decode('utf-8')
 
 # --- 5. PDF GENERATION LOGIC ---
-import html as _html
-
 def _safe_text(text):
     text = str(text) if pd.notna(text) else ""
     return _html.escape(text)
@@ -237,7 +229,6 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
     </body>
     </html>
     """
-
     return HTML(string=html_template).write_pdf()
 
 st.markdown("---")
@@ -266,20 +257,27 @@ col3.metric("Avg Duration per Incident", f"{avg_downtime_mins:,.1f} mins")
 st.markdown("---")
 
 # --- 7. PARETO ANALYSIS ---
-st.subheader("Pareto Analysis by Process")
+st.subheader("Pareto Analysis by Line & Process")
 
-p_calc_df = base_df.groupby('Process')['Duration (mins)'].sum().reset_index()
+base_df['Line_Process'] = base_df['Line'].fillna('Unspecified Line') + " - " + base_df['Process'].fillna('Unspecified Process')
+
+p_calc_df = base_df.groupby('Line_Process')['Duration (mins)'].sum().reset_index()
 p_calc_df = p_calc_df.sort_values(by='Duration (mins)', ascending=False)
 p_calc_df['Cumulative Percentage'] = 100 * p_calc_df['Duration (mins)'].cumsum() / p_calc_df['Duration (mins)'].sum()
 
 fig_pareto = go.Figure()
 fig_pareto.add_trace(go.Bar(
-    x=p_calc_df['Process'], y=p_calc_df['Duration (mins)'],
-    name='Downtime (mins)', marker_color='#005B96'
+    x=p_calc_df['Line_Process'], 
+    y=p_calc_df['Duration (mins)'],
+    name='Downtime (mins)', 
+    marker_color='#005B96'
 ))
 fig_pareto.add_trace(go.Scatter(
-    x=p_calc_df['Process'], y=p_calc_df['Cumulative Percentage'],
-    name='Cumulative %', yaxis='y2', mode='lines+markers',
+    x=p_calc_df['Line_Process'], 
+    y=p_calc_df['Cumulative Percentage'],
+    name='Cumulative %', 
+    yaxis='y2', 
+    mode='lines+markers',
     line=dict(color='#FF9800', width=3)
 ))
 fig_pareto.update_layout(
@@ -291,8 +289,8 @@ st.plotly_chart(fig_pareto, use_container_width=True)
 
 st.markdown("""
 **Purpose and Insights:**
-* **Identify Critical Bottlenecks:** Highlights the 20% of processes causing 80% of total downtime.
-* **Resource Allocation:** Directs maintenance teams to focus on the highest-impact processes first.
+* **Identify Critical Bottlenecks:** Highlights the 20% of specific machine centers causing 80% of total downtime.
+* **Resource Allocation:** Directs maintenance teams to focus on the highest-impact locations first.
 * **ROI Justification:** Provides quantitative backing for requesting capital expenditure to upgrade specific problematic machine centers.
 """)
 st.markdown("---")
