@@ -8,9 +8,18 @@ st.set_page_config(page_title="Breakdown Analysis Dashboard", layout="wide")
 
 @st.cache_data
 def load_data(file):
-    df = pd.read_csv(file)
+    # Determine file type and read accordingly
+    if file.name.endswith('.csv'):
+        df = pd.read_csv(file)
+    elif file.name.endswith(('.xls', '.xlsx')):
+        df = pd.read_excel(file)
+    else:
+        st.error("Unsupported file format. Please upload a CSV or Excel file.")
+        st.stop()
+        
     # Clean and format data
-    df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
+    # Removed strict format string to accommodate Excel's native datetime objects
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df['Duration (mins)'] = pd.to_numeric(df['Duration (mins)'], errors='coerce').fillna(0)
     return df
 
@@ -18,10 +27,11 @@ st.title("🏭 Plant Breakdown & Downtime Analysis")
 
 # --- 2. SIDEBAR & FILE UPLOAD ---
 st.sidebar.header("Data Input & Filters")
-uploaded_file = st.sidebar.file_uploader("Upload Breakdown Data (CSV)", type=['csv'])
+# Updated to accept Excel files
+uploaded_file = st.sidebar.file_uploader("Upload Breakdown Data", type=['csv', 'xlsx', 'xls'])
 
 if uploaded_file is None:
-    st.info("Please upload a CSV file in the sidebar to generate the dashboard.")
+    st.info("Please upload your data file (CSV or Excel) in the sidebar to generate the dashboard.")
     st.stop()
 
 # Load the data once uploaded
