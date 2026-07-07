@@ -23,8 +23,32 @@ def load_data(file):
         st.error("Unsupported file format. Please upload a CSV or Excel file.")
         st.stop()
 
+    # Drop fully blank rows (common with trailing empty rows in Excel exports)
+    df = df.dropna(how='all')
+
+    # Clean up text columns: strip stray whitespace and normalize missing values
+    # so " Electrical" and "Electrical" aren't treated as different categories,
+    # and blank cells don't get read back in as the literal string "nan"
+    for col in ['Entity', 'Process', 'Category']:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+            df[col] = df[col].replace({'nan': pd.NA, 'None': pd.NA, '': pd.NA})
+
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    df['Duration (mins)'] = pd.to_numeric(df['Duration (mins)'], errors='coerce').fillna(0)
+    df['Duration (mins)'] = pd.to_numeric(df['Duration (mins)'], errors='coerce')
+
+    # A row missing any of these fields isn't a usable breakdown record —
+    # drop it instead of silently filling it with 0, which was creating
+    # fake zero-duration "incidents" (e.g. the "nan - nan" rows)
+    required_cols = [c for c in ['Date', 'Process', 'Category', 'Duration (mins)'] if c in df.columns]
+    rows_before = len(df)
+    df = df.dropna(subset=required_cols)
+    dropped = rows_before - len(df)
+
+    df = df.reset_index(drop=True)
+    if dropped > 0:
+        st.sidebar.caption(f"Cleaned data: removed {dropped} incomplete row(s).")
+
     return df
 
 # --- 2. SIDEBAR: FILE UPLOAD ONLY ---
@@ -153,7 +177,7 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
         <table class="layout">
             <tr>
                 <td style="width: 45%; border-right: 1px solid #eee;">
-                    <div class="section-title">Downtime Breakdown</div>
+                    <div class="section-title">Downtime Distribution</div>
                     <div class="img-container"><img src="data:image/png;base64,{pie_img}" style="max-width: 100%;"></div>
                 </td>
                 <td style="width: 55%;">
