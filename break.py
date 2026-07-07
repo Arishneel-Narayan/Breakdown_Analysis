@@ -30,7 +30,7 @@ def load_data(file):
     # Clean up text columns: strip stray whitespace and normalize missing values
     # so " Electrical" and "Electrical" aren't treated as different categories,
     # and blank cells don't get read back in as the literal string "nan"
-    for col in ['Entity', 'Process', 'Category']:
+    for col in ['Entity', 'Process', 'Category', 'Line', 'Shift', 'Details', 'Solution']:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
             df[col] = df[col].replace({'nan': pd.NA, 'None': pd.NA, '': pd.NA})
@@ -101,11 +101,11 @@ end_date_str = pd.Timestamp(end_date).strftime('%d/%m/%Y')
 # --- 4. FAST CHART RENDERING (matplotlib, no subprocess) ---
 PALETTE = ["#005B96", "#FF9800", "#009688", "#8E44AD", "#E74C3C", "#2ECC71", "#95A5A6"]
 
-def render_pie_png(cat_df):
+def render_pie_png(data_df, label_col, value_col):
     fig, ax = plt.subplots(figsize=(4, 3.5), dpi=150)
     ax.pie(
-        cat_df['Duration (mins)'],
-        labels=cat_df['Category'],
+        data_df[value_col],
+        labels=data_df[label_col],
         autopct='%1.0f%%',
         pctdistance=0.8,
         colors=PALETTE,
@@ -134,20 +134,30 @@ def render_trend_png(trend_df):
     return base64.b64encode(buf.read()).decode('utf-8')
 
 # --- 5. PDF GENERATION LOGIC ---
+def _truncate(text, max_len=90):
+    text = str(text) if pd.notna(text) else ""
+    return text if len(text) <= max_len else text[:max_len - 1].rstrip() + "…"
+
 def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
     tot_mins = filtered_df['Duration (mins)'].sum()
     tot_hrs = tot_mins / 60
     tot_inc = len(filtered_df)
     avg_dur = tot_mins / tot_inc if tot_inc > 0 else 0
 
-    top_10 = filtered_df.sort_values(by='Duration (mins)', ascending=False).head(10)
-    top_10_html = "".join([
-        f"<tr><td>{i+1}</td><td>{row['Process']} - {row['Category']}</td><td>{row['Duration (mins)'] / 60:.1f}</td></tr>"
-        for i, row in enumerate(top_10.to_dict('records'))
+    top_breakdowns = filtered_df.sort_values(by='Duration (mins)', ascending=False).head(5)
+    asset_col = 'Line' if 'Line' in filtered_df.columns else 'Entity'
+    top_rows_html = "".join([
+        "<tr>"
+        f"<td>{row.get(asset_col, 'N/A') if pd.notna(row.get(asset_col)) else 'N/A'}</td>"
+        f"<td>{row['Duration (mins)'] / 60:.1f}</td>"
+        f"<td>{_truncate(row.get('Details', ''))}</td>"
+        f"<td>{_truncate(row.get('Solution', ''))}</td>"
+        "</tr>"
+        for row in top_breakdowns.to_dict('records')
     ])
 
     cat_df = filtered_df.groupby('Category')['Duration (mins)'].sum().reset_index()
-    pie_img = render_pie_png(cat_df)
+    pie_img = render_pie_png(cat_df, 'Category', 'Duration (mins)')
 
     trend_df = filtered_df.groupby('Date')['Duration (mins)'].sum().reset_index().sort_values('Date')
     trend_img = render_trend_png(trend_df)
@@ -163,8 +173,8 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
         table.layout td {{ vertical-align: top; padding: 10px; }}
         .section-title {{ font-size: 14pt; color: #005B96; font-weight: bold; border-bottom: 1px solid #eee; margin-bottom: 10px; padding-bottom: 5px; }}
         .img-container {{ text-align: center; }}
-        .data-table {{ width: 100%; border-collapse: collapse; font-size: 10pt; }}
-        .data-table th, .data-table td {{ border-bottom: 1px solid #eee; padding: 6px; text-align: left; }}
+        .data-table {{ width: 100%; border-collapse: collapse; font-size: 9pt; table-layout: fixed; }}
+        .data-table th, .data-table td {{ border-bottom: 1px solid #eee; padding: 6px; text-align: left; word-wrap: break-word; }}
         .data-table th {{ background-color: #005B96; color: white; }}
         .stats-table {{ width: 100%; text-align: center; margin-top: 20px; border-collapse: separate; border-spacing: 10px 0; }}
         .stats-table td {{ border: 1px solid #ddd; padding: 15px; width: 33.33%; border-radius: 5px; background-color: #f9f9f9; }}
@@ -173,26 +183,29 @@ def generate_pdf(filtered_df, start_d_str, end_d_str, entity_filter):
     </head>
     <body>
         <div class="header">
-            <h1 style="color: #005B96; margin: 0; text-transform: uppercase;">Breakdown Analysis Report</h1>
+            <h1 style="color: #005B96; margin: 0; text-transform: uppercase;">Breakdown Analysis</h1>
             <p style="margin: 5px 0 0 0; color: #555;">Entity: {entity_filter} | Date Range: {start_d_str} to {end_d_str}</p>
         </div>
         <table class="layout">
             <tr>
-                <td style="width: 45%; border-right: 1px solid #eee;">
-                    <div class="section-title">Downtime Distribution</div>
+                <td style="width: 50%; border-right: 1px solid #eee;">
+                    <div class="section-title">Distribution</div>
                     <div class="img-container"><img src="data:image/png;base64,{pie_img}" style="max-width: 100%;"></div>
                 </td>
-                <td style="width: 55%;">
-                    <div class="section-title">Top Breakdowns</div>
-                    <table class="data-table">
-                        <tr><th>Rank</th><th>Process</th><th>Hours</th></tr>
-                        {top_10_html}
-                    </table>
+                <td style="width: 50%;">
+                    <div class="section-title">Trend</div>
+                    <div class="img-container"><img src="data:image/png;base64,{trend_img}" style="max-width: 100%;"></div>
                 </td>
             </tr>
         </table>
-        <div class="section-title">Downtime Trend</div>
-        <div class="img-container"><img src="data:image/png;base64,{trend_img}" style="max-width: 100%;"></div>
+        <div class="section-title">Top Breakdown</div>
+        <table class="data-table">
+            <colgroup>
+                <col style="width: 15%;"><col style="width: 12%;"><col style="width: 38%;"><col style="width: 35%;">
+            </colgroup>
+            <tr><th>Asset</th><th>Duration (Hrs)</th><th>Details</th><th>Solution</th></tr>
+            {top_rows_html}
+        </table>
         <table class="stats-table">
             <tr>
                 <td>Total Downtime (Hrs)<span class="val">{tot_hrs:,.1f}</span></td>
@@ -302,4 +315,30 @@ st.markdown("""
 **Purpose and Insights:**
 * **Skill Gap Identification:** Reveals if the majority of issues are Electrical vs. Mechanical, dictating which type of specialized technician is required on shift.
 * **Maintenance Strategy:** A high percentage of mechanical issues indicates a potential lack of lubrication or worn parts, while electrical issues point to sensor failures or power quality problems.
+""")
+st.markdown("---")
+
+# --- 10. BREAKDOWN DISTRIBUTION BY SHIFT ---
+st.subheader("Breakdown Distribution by Shift")
+
+shift_df = base_df.copy()
+if 'Shift' in shift_df.columns:
+    shift_df['Shift'] = shift_df['Shift'].fillna('Unspecified')
+else:
+    shift_df['Shift'] = 'Unspecified'
+
+shift_calc_df = shift_df.groupby('Shift')['Duration (mins)'].sum().reset_index()
+
+fig_shift = px.pie(
+    shift_calc_df, values='Duration (mins)', names='Shift', hole=0.4,
+    color_discrete_sequence=px.colors.qualitative.Safe
+)
+fig_shift.update_traces(textposition='inside', textinfo='percent+label')
+fig_shift.update_layout(margin=dict(l=0, r=0, t=30, b=0))
+st.plotly_chart(fig_shift, use_container_width=True)
+
+st.markdown("""
+**Purpose and Insights:**
+* **Shift Accountability:** Highlights whether breakdowns cluster around a specific shift, pointing to handover gaps or operating-practice differences.
+* **Staffing & Training:** A shift with disproportionately high downtime may need more experienced technicians or refresher training scheduled during that window.
 """)
